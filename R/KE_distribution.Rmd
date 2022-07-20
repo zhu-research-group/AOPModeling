@@ -1,0 +1,122 @@
+---
+title: "AOP Distribution"
+author: "Daniel Russo"
+date: "3/11/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(reticulate)
+reticulate::use_condaenv(condaenv = 'toxcast')
+```
+
+
+```{r}
+library(mongolite)
+
+m <- mongo("aop_models", url = "mongodb://localhost:27017/LiverToxCast")
+
+pipe <- '[
+          {"$match": {"_id.type": "human"}},
+          {
+              "$project": {
+                  "casn": "$_id.casn",
+                  "aop": "$_id.aop",
+                  "auc_score": "$auc_norm",
+                  "_id": 0
+              }
+          }
+            ]'
+
+aop.models <- m$aggregate(pipeline = pipe)
+
+m.set <- mongo("modeling_set", url = "mongodb://localhost:27017/LiverToxCast")
+
+modeling_set = m.set$find(query='{}', fields='{"_id":0, "CASRN": 0}')
+
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+aop.models[aop.models<=0] = 0 
+
+```
+
+
+```{r}
+library(pROC)
+
+
+TEXT.SIZE <- 20
+
+hp.cmps <- merge(aop.models, modeling_set[c("H_HT_class", 'casn')]) %>% filter(!is.na(H_HT_class))
+
+rocs <- list()
+
+colors = c()
+is.red = c()
+is.grey = c()
+
+for (target.aop in unique(hp.cmps$aop)) {
+  one.aop <- hp.cmps %>% filter(aop == target.aop, auc_score > 0)
+
+  print(target.aop)
+  print(nrow(one.aop))
+  if (nrow(one.aop) > 10) {
+      rocs[[target.aop]] <- roc(one.aop$H_HT_class, one.aop$auc_score)
+      if (rocs[[target.aop]]$auc > 0.6) {
+        colors = c(colors, c('red')) 
+        is.red = c(is.red, target.aop)
+      } else {
+        colors = c(colors, c('grey'))
+        is.grey = c(is.grey, target.aop)
+      }
+  }
+
+}
+
+
+roc_plot <- ggroc(rocs, show.legend=FALSE, size=1) + scale_color_manual(values=colors) + theme_linedraw(base_size = TEXT.SIZE)
+
+roc_plot
+```
+
+Write to a file
+
+```{r}
+
+aop_names <- c()
+roc_scores <- c()
+
+for (i in 1:length(rocs)) {
+  
+  aop <- names(rocs)[i]
+  roc_score <- rocs[[i]]$auc
+  aop_names <- c(aop_names, aop)
+  roc_scores <- c(roc_scores, roc_score)
+}
+
+df <- data.frame(aop_names, roc_scores)
+write.csv(df, '../data/text/roc_scores.csv')
+```
+
+```{r}
+library(patchwork)
+
+
+box <- aop.models %>%
+  filter(auc_score > 0) %>%
+  mutate(AOP = aop) %>%
+  mutate(`KE Score`= log(auc_score)) %>%
+  mutate(isred = if_else(AOP %in% is.red, 'red', 'grey')) %>%
+  ggplot(aes(y=AOP, x=`KE Score`, fill=isred)) +
+  geom_boxplot(show.legend=FALSE, outlier.alpha = 0.4,  alpha=0.6) + scale_fill_manual(values=c('red'='red', 'grey'='grey')) + theme_linedraw(base_size = TEXT.SIZE-2)
+
+box
+
+```

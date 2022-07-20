@@ -1,0 +1,7 @@
+R/R.Rproj
+python/__pycache__
+.DS_Store
+*.ipynb_checkpoints/*
+*.Rproj.user
+*.ipynb_checkpoints
+*.Rhistory

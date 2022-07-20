@@ -1,0 +1,25 @@
+name: toxcast
+channels:
+  - rdkit
+  - r
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - chembl_structure_pipeline=1.0.0
+  - jupyter=1.0.0
+  - jupyterlab=3.0.16
+  - pandas=1.2.5
+  - pymongo=3.11.4
+  - python=3.7.10
+  - pytorch=1.9.0
+  - r=3.3.1
+  - rdkit=2020.09.1.0
+  - scikit-learn
+  - scipy=1.7.3
+  - seaborn=0.11.1
+  - tensorflow=1.14.0
+  - torchaudio=0.9.0
+  - torchvision=0.10.0
+  - pip:
+    - mols2grid==0.0.6

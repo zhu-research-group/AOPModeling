@@ -1,0 +1,173 @@
+---
+title: "ClusterMap"
+author: "Daniel Russo"
+date: "1/26/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(reticulate)
+use_condaenv(condaenv = 'cheminf')
+
+```
+
+## Set up
+
+The variable `NAMES` can be set to `AOP` or `MECHANISM`.  `AOP` means set the 
+variable to the AOP name like AOP 1, AOP 2, etc.  `MECHANISM` means set it to the
+mechanism like CYTOTOXICITY, etc.
+
+## data clean up
+
+use python to set all aops bound all AOPs < 0 to 0 AUC scores can sometimes result in 
+less than 0 but this is meaningless.
+
+NOTE: for whatever reason, the `toxcast2` environment causes the R kernel to crash.  Hence, I am using the `cheminf` environment
+
+```{python}
+import pandas as pd
+
+NAMES = "KE"
+
+df = pd.read_csv('../data/text/full_aop_scores.csv')
+clusters = pd.read_csv('../data/text/full_tox21_clusters.csv')
+names_frame = pd.read_csv("../data/text/AOP_mechanism_table.csv")
+if NAMES == "AOP":
+    mapper = dict(zip(names_frame["Mechanism"], names_frame["AOP"]))
+    df['aop'] = df['aop'].map(mapper)
+
+if NAMES == "KE":
+    mapper = dict(zip(names_frame["Mechanism"], names_frame["KE"]))
+    df['KE'] = df['aop'].map(mapper)
+
+df.loc[df.auc_score <= 0, 'auc_score'] = 0
+
+df_wide = df.pivot(index='casn', columns='KE', values='auc_score')
+
+
+df_wide.head()
+
+```
+
+### Calculate KE scores by cluster
+
+Group by cluster and take the mean per cluster for AOP score
+
+Remove columns that have no AOP scores > 0
+
+
+```{python}
+
+cluster_aops = df.merge(clusters[['casn', 'Cluster']]).groupby(['Cluster', 'KE'])['auc_score'].mean()
+
+cluster_aops = cluster_aops.reset_index().pivot(index='Cluster', values='auc_score', columns='KE')
+
+# remove AOPs that are 0
+# for every cluster to make 
+# the visualization better
+cluster_aops = cluster_aops.loc[:, (cluster_aops  > 0).any()]
+
+```
+
+Arbitrarily set the min as 0, 0.1 as the midpoint and finally the max as red
+
+```{r, echo=FALSE}
+library(ComplexHeatmap)
+library(circlize)
+
+low.color = scales::muted("blue")
+#low.color = "blue"
+mid.color = "white"
+high.color = scales::muted("red")
+#high.color = "red"
+
+cluster_means = py$cluster_aops
+
+# can change this to max(cluster_means)
+# to replace the 1, to make the differences 
+# more apparent
+col.mapper = colorRamp2(c(min(cluster_means), 0.1, 1), c(low.color, mid.color, high.color))
+
+#png("../data/figures/cluster_heatmap.png", width=9, height=8,units="in",res=800)
+Heatmap(as.matrix(cluster_means ),
+        col=col.mapper,
+        rect_gp = gpar(col = "grey", lwd = 1),
+        name = "KE Score",
+        )
+#dev.off()
+
+```
+
+
+### now plot the interesting Clusters
+
+First prepare the data in pandas
+
+
+```{python}
+
+good_clusters = [377, 380, 387, 176, 16, 196, 26, 231]
+print(clusters)
+clusters_limited = clusters[clusters.Cluster.isin(good_clusters)]
+
+limited_df = df.merge(clusters_limited[['casn', 'Cluster', 'Liver',  'Hepatobiliary', 'Hepatocellular']])
+
+limited_df = limited_df.pivot(index=['casn', 'Cluster', 'Liver',  'Hepatobiliary', 'Hepatocellular'], values='auc_score', columns='KE').reset_index()
+
+limited_clusters = limited_df.pop('Cluster').values.tolist()
+limited_liver = limited_df.pop('Liver').values.tolist()
+limited_hb = limited_df.pop('Hepatobiliary').values.tolist()
+limited_hc = limited_df.pop('Hepatocellular').values.tolist()
+
+limited_df = limited_df.set_index('casn')
+print(limited_df.mean())
+
+limited_df = limited_df.loc[:, (limited_df  > 0 ).any()]
+
+```
+
+```{r, dev='png'}
+
+aop_scores = py$limited_df
+split = py$limited_clusters
+liverLimit = py$limited_liver
+hcLimit = py$limited_hc
+hbLimit = py$limited_hb
+print(split)
+
+hbLimit[is.nan(hbLimit)]<-NA
+hcLimit[is.nan(hcLimit)]<-NA
+liverLimit[is.nan(liverLimit)]<-NA
+
+print(typeof(liverLimit[4]))
+
+#col_fun1 = colorRamp2(c(0, max(aop_scores)), c("white", "red"))
+col.mapper = colorRamp2(c(0, 0.1, 1), c(low.color, mid.color, high.color))
+liver.col.mapper = colorRamp2(c(0, 1), c("green", "red"))
+
+ha = rowAnnotation(
+  Hepatotoxicity = factor(liverLimit),
+  Hepatocellular = factor(hcLimit),
+  Hepatobiliary = factor(hbLimit),
+  col=list(Hepatotoxicity=c("1" = "red", "0" = "Green"),
+           Hepatobiliary=c("1" = "red", "0" = "Green"),
+           Hepatocellular=c("1" = "red", "0" = "Green")),
+  name="Liver",
+  gp = gpar(col = "grey", lwd = 1)
+)
+
+#png("../data/figures/full_heatmap.png", width=9, height=8,units="in",res=800)
+Heatmap(as.matrix(aop_scores),
+        split = factor(paste("", split)),
+        col=col.mapper,
+        rect_gp = gpar(col = "grey", lwd = 1),
+        name = "KE Score", border_gp = gpar(col = "black", lty = 2),
+        left_annotation = ha,
+        row_labels = rep("", nrow(aop_scores)))
+#dev.off()
+```
+
